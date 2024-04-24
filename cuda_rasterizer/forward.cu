@@ -298,6 +298,7 @@ renderCUDA(
 
 	// Initialize helper variables
 	float T = 1.0f;
+	int mode = 0;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
@@ -320,6 +321,7 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 		}
 		block.sync();
+		int count = 0;
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
@@ -343,22 +345,63 @@ renderCUDA(
 			float alpha = min(0.99f, con_o.w * exp(power));
 			if (alpha < 1.0f / 255.0f)
 				continue;
+			// float test_T = T * (1 - alpha);
+			// if (test_T < 0.0001f)
+			// {
+			// 	done = true;
+			// 	continue;
+			// }
+
+			// count += 1;
+			// if (count == 3) {
+			if (T - alpha <= 0.) {
+				mode = 1;
+			}
+			// mode = 1;
+
+			// if (T > 0) {
+			// 	expT = T;
+			// 	T = -1.0;
+			// }
+
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
-			{
+			if (mode == 1 && test_T < 0.0001f) {
 				done = true;
 				continue;
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			for (int ch = 0; ch < CHANNELS; ch++) {
+				if (mode == 1) {
+					C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+				}
+				else {
+					C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha ;
+				}
+			}
 
-			T = test_T;
 
+
+				
+			// float test_T = T + alpha;
+			// expT *= 1.0f - alpha;
+			// if (test_T > 1.0f)
+			// {
+			// 	// done = true;
+			// 	// continue;
+			// }
+
+			// T = test_T;
+			// if (expT <= 1.1) expT = test_expT;
+			// if (T > -0.5) T -= alpha;
+			if (mode == 1) T = test_T;
+			else T -= alpha;
+			// expT = test_expT;
+			
 			// Keep track of last range entry to update this
 			// pixel.
-			last_contributor = contributor;
+			last_contributor = contributor;		
+
 		}
 	}
 

@@ -477,6 +477,31 @@ renderCUDA(
 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
 		}
 		block.sync();
+		int mode = 1, last_mode = 1, linearNum = 0;
+		float curT = 0, exp_acc[C] = { 0 };
+
+		for (int j = min(BLOCK_SIZE, toDo) - 1; j >= 0; j--) {
+			const float2 xy = collected_xy[j];
+			const float2 d = { xy.x - pixf.x, xy.y - pixf.y };
+			const float4 con_o = collected_conic_opacity[j];
+			const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			if (power > 0.0f)
+				continue;
+
+			const float G = exp(power);
+			const float alpha = min(0.99f, con_o.w * G);
+			if (alpha < 1.0f / 255.0f)
+				continue;
+
+			if (curT + alpha >= 1.0) {
+				break;
+			}
+
+			curT += alpha;
+			linearNum++;
+		}
+
+		// linearNum = 2;
 
 		// Iterate over Gaussians
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
@@ -500,8 +525,16 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 
-			T = T / (1.f - alpha);
-			const float dchannel_dcolor = alpha * T;
+			if (contributor < linearNum && mode == 1) {
+				mode = 0;
+			}
+
+			if (mode == 0) T += alpha;
+			else T = T / (1.f - alpha);
+			// T = T / (1.f - alpha);
+			// T -= alpha;
+			float dchannel_dcolor = alpha;
+			if (mode == 1) dchannel_dcolor *= T;
 
 			// Propagate gradients to per-Gaussian colors and keep
 			// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
@@ -512,26 +545,50 @@ renderCUDA(
 			{
 				const float c = collected_colors[ch * BLOCK_SIZE + j];
 				// Update last color (to be used in the next iteration)
-				accum_rec[ch] = last_alpha * last_color[ch] + (1.f - last_alpha) * accum_rec[ch];
+				if (last_mode == 1) {
+					accum_rec[ch] = last_alpha * last_color[ch] + (1.f - last_alpha) * accum_rec[ch];
+					exp_acc[ch] = last_alpha * last_color[ch] + (1.f - last_alpha) * exp_acc[ch];
+
+				}
+				else {
+					accum_rec[ch] += last_alpha * last_color[ch];
+				}
 				last_color[ch] = c;
 
 				const float dL_dchannel = dL_dpixel[ch];
-				dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				// if (mode == 1) {
+				// 	dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				// } else {
+				// 	// dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				// 	dL_dalpha += c * dL_dchannel;
+				// }
+				dL_dalpha += (c - exp_acc[ch]) * dL_dchannel;
 				// Update the gradients w.r.t. color of the Gaussian. 
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
 			}
-			dL_dalpha *= T;
+			if (mode == 1) {
+				dL_dalpha *= T;
+			}
+			else {
+				dL_dalpha *= 1.0;
+			}
 			// Update last alpha (to be used in the next iteration)
 			last_alpha = alpha;
+			last_mode = mode;
 
 			// Account for fact that alpha also influences how much of
 			// the background color is added if nothing left to blend
 			float bg_dot_dpixel = 0;
 			for (int i = 0; i < C; i++)
 				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
-			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
+			if (mode == 1) {
+				dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
+			}
+			else {
+				dL_dalpha +=  -bg_dot_dpixel;
+			}
 
 
 			// Helpful reusable temporary variables
