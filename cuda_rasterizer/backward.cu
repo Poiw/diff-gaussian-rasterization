@@ -478,7 +478,7 @@ renderCUDA(
 		}
 		block.sync();
 		int mode = 1, last_mode = 1, linearNum = 0;
-		float curT = 0, exp_acc[C] = { 0 };
+		float curT = 0, exp_acc[C] = { 0 }, tr_exp_acc = 1.0;
 
 		for (int j = min(BLOCK_SIZE, toDo) - 1; j >= 0; j--) {
 			const float2 xy = collected_xy[j];
@@ -530,7 +530,10 @@ renderCUDA(
 			}
 
 			if (mode == 0) T += alpha;
-			else T = T / (1.f - alpha);
+			else {
+				T = T / (1.f - alpha);
+				tr_exp_acc = tr_exp_acc * (1.f - alpha);
+			}
 			// T = T / (1.f - alpha);
 			// T -= alpha;
 			float dchannel_dcolor = alpha;
@@ -587,7 +590,7 @@ renderCUDA(
 				dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 			}
 			else {
-				dL_dalpha +=  -bg_dot_dpixel;
+				dL_dalpha +=  - tr_exp_acc * bg_dot_dpixel;
 			}
 
 
