@@ -485,13 +485,17 @@ renderCUDA(
 			const float2 d = { xy.x - pixf.x, xy.y - pixf.y };
 			const float4 con_o = collected_conic_opacity[j];
 			const float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
-			if (power > 0.0f)
+			if (power > 0.0f) {
+				linearNum++;
 				continue;
+			}
 
 			const float G = exp(power);
 			const float alpha = min(0.99f, con_o.w * G);
-			if (alpha < 1.0f / 255.0f)
+			if (alpha < 1.0f / 255.0f) {
+				linearNum++;
 				continue;
+			}
 
 			if (curT + alpha >= 1.0) {
 				break;
